@@ -291,8 +291,6 @@ async function startLocalStream() {
 
 // ── UI ─────────────────────────────────────────────────────────────────────
 
-let currentSlide = 0;
-
 function setStatus(state, label) {
   document.getElementById('status-dot').className = `status-dot ${state}`;
   document.getElementById('status-label').textContent = label;
@@ -301,84 +299,70 @@ function setStatus(state, label) {
 function attachStream(peerId, stream) {
   const tile = document.querySelector(`[data-peer="${peerId}"]`);
   if (!tile) return;
-  const video = tile.querySelector('video');
-  video.srcObject = stream;
+  tile.querySelector('video').srcObject = stream;
   tile.classList.remove('connecting');
 }
 
 function showLocalTile(tileId, stream, label) {
-  const swiper = document.getElementById('screens-swiper');
-  document.getElementById('swiper-wrap').style.display = 'flex';
+  const grid = document.getElementById('screens-grid');
   document.getElementById('empty-state').style.display = 'none';
+  grid.style.display = 'grid';
 
-  let tile = swiper.querySelector(`[data-peer="${tileId}"]`);
+  let tile = grid.querySelector(`[data-peer="${tileId}"]`);
   if (!tile) {
     tile = buildTile(tileId, { name: label });
-    // Insert after last local tile so local screens always stay at front
-    const locals = [...swiper.querySelectorAll('[data-peer^="__local"]')];
+    // Local tiles always go first
+    const locals = [...grid.querySelectorAll('[data-peer^="__local"]')];
     const last = locals[locals.length - 1];
-    last ? last.insertAdjacentElement('afterend', tile) : swiper.insertBefore(tile, swiper.firstChild);
+    last ? last.insertAdjacentElement('afterend', tile) : grid.insertBefore(tile, grid.firstChild);
   }
 
   tile.querySelector('video').srcObject = stream;
   tile.classList.remove('connecting');
-  renderNavDots();
-  updateArrows();
-}
-
-function renderNavDots() {
-  const swiper = document.getElementById('screens-swiper');
-  const nav = document.getElementById('swiper-nav');
-  const count = swiper.querySelectorAll('[data-peer]').length;
-  nav.style.display = count > 1 ? 'flex' : 'none';
-  nav.innerHTML = '';
-  for (let i = 0; i < count; i++) {
-    const dot = document.createElement('button');
-    dot.className = `nav-dot${i === currentSlide ? ' active' : ''}`;
-    dot.setAttribute('aria-label', `Screen ${i + 1}`);
-    dot.addEventListener('click', () => goTo(i));
-    nav.appendChild(dot);
-  }
+  updateGridColumns();
 }
 
 function renderScreens() {
-  const swiper = document.getElementById('screens-swiper');
-  const wrap = document.getElementById('swiper-wrap');
-  const nav = document.getElementById('swiper-nav');
+  const grid = document.getElementById('screens-grid');
   const empty = document.getElementById('empty-state');
   const peerIds = [...peers.keys()];
 
   if (peerIds.length === 0 && !localStream) {
-    wrap.style.display = 'none';
-    nav.style.display = 'none';
+    grid.style.display = 'none';
     empty.style.display = 'flex';
     return;
   }
 
   empty.style.display = 'none';
-  wrap.style.display = 'flex';
+  grid.style.display = 'grid';
 
   // Remove tiles for gone peers (preserve local tiles and secondary monitor tiles)
-  swiper.querySelectorAll('[data-peer]').forEach(el => {
+  grid.querySelectorAll('[data-peer]').forEach(el => {
     const id = el.dataset.peer;
     if (id.startsWith('__local')) return;
-    const belongsToKnownPeer = peers.has(id) || [...peers.keys()].some(p => id.startsWith(p + '_'));
-    if (!belongsToKnownPeer) el.remove();
+    const known = peers.has(id) || [...peers.keys()].some(p => id.startsWith(p + '_'));
+    if (!known) el.remove();
   });
 
   // Add tiles for new peers
-  const existing = new Set([...swiper.querySelectorAll('[data-peer]')].map(el => el.dataset.peer));
+  const existing = new Set([...grid.querySelectorAll('[data-peer]')].map(el => el.dataset.peer));
   for (const peerId of peerIds) {
     if (!existing.has(peerId)) {
       const peer = peers.get(peerId);
       const tile = buildTile(peerId, peer);
-      swiper.appendChild(tile);
+      grid.appendChild(tile);
       if (peer.stream) attachStream(peerId, peer.stream);
     }
   }
 
-  renderNavDots();
-  updateArrows();
+  updateGridColumns();
+}
+
+function updateGridColumns() {
+  const grid = document.getElementById('screens-grid');
+  const count = grid.querySelectorAll('.screen-card').length;
+  const cols = count <= 1 ? 1 : count <= 4 ? 2 : 3;
+  grid.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
 }
 
 function buildTile(peerId, peer) {
@@ -400,8 +384,8 @@ function buildTile(peerId, peer) {
 
   const fsBtn = document.createElement('button');
   fsBtn.className = 'fs-btn';
-  fsBtn.title = 'Fullscreen (double-click)';
-  fsBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  fsBtn.title = 'Fullscreen';
+  fsBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   fsBtn.addEventListener('click', e => { e.stopPropagation(); toggleFullscreen(video); });
 
   const spinner = document.createElement('div');
@@ -414,9 +398,32 @@ function buildTile(peerId, peer) {
   tile.appendChild(overlay);
   tile.appendChild(spinner);
 
-  tile.addEventListener('dblclick', () => toggleFullscreen(video));
+  tile.addEventListener('click', () => openModal(peerId));
 
   return tile;
+}
+
+// ── Modal ──────────────────────────────────────────────────────────────────
+
+function openModal(tileId) {
+  const tile = document.querySelector(`[data-peer="${tileId}"]`);
+  if (!tile || tile.classList.contains('connecting')) return;
+  const stream = tile.querySelector('video').srcObject;
+  const label = tile.querySelector('.peer-label')?.textContent || '';
+
+  const overlay = document.getElementById('modal-overlay');
+  const video = document.getElementById('modal-video');
+  document.getElementById('modal-label').textContent = label;
+  video.srcObject = stream;
+  overlay.dataset.tileId = tileId;
+  overlay.style.display = 'flex';
+}
+
+function closeModal() {
+  const overlay = document.getElementById('modal-overlay');
+  overlay.style.display = 'none';
+  document.getElementById('modal-video').srcObject = null;
+  delete overlay.dataset.tileId;
 }
 
 function toggleFullscreen(el) {
@@ -424,42 +431,23 @@ function toggleFullscreen(el) {
   else el.requestFullscreen().catch(() => {});
 }
 
-function goTo(index) {
-  const swiper = document.getElementById('screens-swiper');
-  const cards = swiper.querySelectorAll('.screen-card');
-  if (!cards[index]) return;
-  currentSlide = index;
-  swiper.scrollTo({ left: cards[index].offsetLeft, behavior: 'smooth' });
-  document.querySelectorAll('.nav-dot').forEach((d, i) => d.classList.toggle('active', i === index));
-  updateArrows();
-}
-
-function updateArrows() {
-  const swiper = document.getElementById('screens-swiper');
-  const count = swiper.querySelectorAll('.screen-card').length;
-  document.getElementById('arrow-left').style.opacity = currentSlide > 0 ? '1' : '0';
-  document.getElementById('arrow-right').style.opacity = currentSlide < count - 1 ? '1' : '0';
-}
-
 // ── Init ───────────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('device-name').textContent = MY_HOSTNAME;
 
-  document.getElementById('arrow-left').addEventListener('click', () => goTo(currentSlide - 1));
-  document.getElementById('arrow-right').addEventListener('click', () => goTo(currentSlide + 1));
-
-  document.addEventListener('keydown', e => {
-    if (e.key === 'ArrowLeft') goTo(currentSlide - 1);
-    if (e.key === 'ArrowRight') goTo(currentSlide + 1);
+  document.getElementById('modal-close').addEventListener('click', closeModal);
+  document.getElementById('modal-fs-btn').addEventListener('click', () => {
+    toggleFullscreen(document.getElementById('modal-video'));
   });
 
-  document.getElementById('screens-swiper').addEventListener('scroll', function () {
-    const cards = this.querySelectorAll('.screen-card');
-    if (!cards.length) return;
-    currentSlide = Math.round(this.scrollLeft / this.offsetWidth);
-    document.querySelectorAll('.nav-dot').forEach((d, i) => d.classList.toggle('active', i === currentSlide));
-    updateArrows();
+  // Click outside the video card closes the modal
+  document.getElementById('modal-overlay').addEventListener('click', e => {
+    if (e.target === document.getElementById('modal-overlay')) closeModal();
+  });
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeModal();
   });
 
   connect();

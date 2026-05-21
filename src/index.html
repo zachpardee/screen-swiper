@@ -42,14 +42,23 @@
       <p>Other devices running Screen Swiper on the same Wi-Fi will appear here automatically.</p>
     </div>
 
-    <div class="swiper-wrap" id="swiper-wrap" style="display:none">
-      <button class="arrow arrow-left" id="arrow-left" aria-label="Previous">&#8249;</button>
-      <div class="screens-swiper" id="screens-swiper"></div>
-      <button class="arrow arrow-right" id="arrow-right" aria-label="Next">&#8250;</button>
-    </div>
-
-    <div class="swiper-nav" id="swiper-nav"></div>
+    <div class="screens-grid" id="screens-grid" style="display:none"></div>
   </main>
+
+  <!-- Enlarged view modal -->
+  <div class="modal-overlay" id="modal-overlay" style="display:none">
+    <div class="modal-inner" id="modal-inner">
+      <video id="modal-video" autoplay muted playsinline></video>
+      <div class="modal-footer">
+        <span class="modal-label" id="modal-label"></span>
+        <button class="modal-fs-btn" id="modal-fs-btn">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Fullscreen
+        </button>
+      </div>
+    </div>
+    <button class="modal-close-btn" id="modal-close">✕</button>
+  </div>
 
   <script src="renderer.js"></script>
 </body>
