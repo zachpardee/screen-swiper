@@ -13,9 +13,11 @@ let streamReady = false;
 let streamReadyResolve = null;
 const streamReadyPromise = new Promise(r => { streamReadyResolve = r; });
 
-const peers = new Map();       // peerId -> { name, ip, stream? }
-const connections = new Map(); // peerId -> RTCPeerConnection
-const pendingOffers = [];      // peerIds waiting for localStream
+const peers = new Map();          // peerId -> { name, ip, stream? }
+const connections = new Map();    // peerId -> RTCPeerConnection
+const pendingOffers = [];         // peerIds waiting for localStream
+const localStreamsList = [];      // all captured local streams, in order
+const peerStreams = new Map();     // peerId -> Set<stream.id> already tiled
 
 // ── WebSocket ──────────────────────────────────────────────────────────────
 
@@ -105,8 +107,9 @@ function getOrCreatePC(peerId) {
   const pc = new RTCPeerConnection(ICE_CONFIG);
   connections.set(peerId, pc);
 
-  if (localStream) {
-    localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+  // Add all captured local streams upfront
+  for (const stream of localStreamsList) {
+    stream.getTracks().forEach(t => pc.addTrack(t, stream));
   }
 
   pc.onicecandidate = ({ candidate }) => {
@@ -115,12 +118,39 @@ function getOrCreatePC(peerId) {
     }
   };
 
+  // Renegotiate when new tracks are added (e.g. secondary monitor captured after connection)
+  pc.onnegotiationneeded = async () => {
+    if (pc.signalingState !== 'stable') return;
+    try {
+      const offer = await pc.createOffer();
+      if (pc.signalingState !== 'stable') return;
+      await pc.setLocalDescription(offer);
+      ws.send(JSON.stringify({ type: 'offer', to: peerId, sdp: pc.localDescription }));
+    } catch {}
+  };
+
   pc.ontrack = ({ streams }) => {
     const stream = streams[0];
     if (!stream) return;
+
+    let seen = peerStreams.get(peerId);
+    if (!seen) { seen = new Set(); peerStreams.set(peerId, seen); }
+    if (seen.has(stream.id)) return; // already created a tile for this stream
+    seen.add(stream.id);
+
+    const idx = seen.size - 1;
+    const tileId = idx === 0 ? peerId : `${peerId}_${idx}`;
     const peer = peers.get(peerId) || {};
     peers.set(peerId, { ...peer, stream });
-    attachStream(peerId, stream);
+
+    if (idx > 0) {
+      const tile = buildTile(tileId, { name: peer.name || peerId.slice(0, 8) });
+      document.getElementById('screens-swiper').appendChild(tile);
+      renderNavDots();
+      updateArrows();
+    }
+
+    attachStream(tileId, stream);
   };
 
   pc.onconnectionstatechange = () => {
@@ -141,6 +171,8 @@ async function onOffer(from, sdp) {
   // Wait for local stream so our tracks are included in the answer
   if (!streamReady) await streamReadyPromise;
   const pc = getOrCreatePC(from);
+  // If we have a pending local offer (collision), the lower UUID wins and ignores this offer
+  if (pc.signalingState === 'have-local-offer' && myId < from) return;
   await pc.setRemoteDescription(new RTCSessionDescription(sdp));
   const answer = await pc.createAnswer();
   await pc.setLocalDescription(answer);
@@ -162,6 +194,14 @@ async function onIce(from, candidate) {
 function dropConnection(peerId) {
   const pc = connections.get(peerId);
   if (pc) { pc.close(); connections.delete(peerId); }
+  peerStreams.delete(peerId);
+  // Remove primary tile and any secondary monitor tiles (uuid_1, uuid_2, …)
+  document.querySelectorAll('[data-peer]').forEach(el => {
+    const id = el.dataset.peer;
+    if (id === peerId || id.startsWith(peerId + '_')) el.remove();
+  });
+  renderNavDots();
+  updateArrows();
 }
 
 // ── Screen capture ─────────────────────────────────────────────────────────
@@ -186,6 +226,8 @@ async function startLocalStream() {
         audio: false,
       });
 
+      localStreamsList.push(stream);
+
       if (i === 0) {
         localStream = stream;
         streamReady = true;
@@ -200,11 +242,17 @@ async function startLocalStream() {
           });
         }
         for (const peerId of pendingOffers.splice(0)) sendOffer(peerId);
+      } else {
+        // Inject secondary monitor tracks into existing connections (triggers renegotiation)
+        for (const [, pc] of connections) {
+          stream.getTracks().forEach(t => pc.addTrack(t, stream));
+        }
       }
 
       showLocalTile(tileId, stream, label);
 
       stream.getVideoTracks()[0].onended = () => {
+        localStreamsList.splice(localStreamsList.indexOf(stream), 1);
         const tile = document.querySelector(`[data-peer="${tileId}"]`);
         if (tile) tile.remove();
         renderNavDots();
@@ -291,9 +339,12 @@ function renderScreens() {
   empty.style.display = 'none';
   wrap.style.display = 'flex';
 
-  // Remove tiles for gone peers (preserve all local tiles)
+  // Remove tiles for gone peers (preserve local tiles and secondary monitor tiles)
   swiper.querySelectorAll('[data-peer]').forEach(el => {
-    if (!el.dataset.peer.startsWith('__local') && !peers.has(el.dataset.peer)) el.remove();
+    const id = el.dataset.peer;
+    if (id.startsWith('__local')) return;
+    const belongsToKnownPeer = peers.has(id) || [...peers.keys()].some(p => id.startsWith(p + '_'));
+    if (!belongsToKnownPeer) el.remove();
   });
 
   // Add tiles for new peers
