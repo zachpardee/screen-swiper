@@ -1,0 +1,40 @@
+{
+  "name": "screen-swiper",
+  "version": "1.0.0",
+  "description": "Stream any screen on your local network",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win portable"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "electron": "^42.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.screenswiper.app",
+    "productName": "Screen Swiper",
+    "files": [
+      "main.js",
+      "preload.js",
+      "server.js",
+      "src/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "ScreenSwiper.exe"
+    }
+  }
+}
