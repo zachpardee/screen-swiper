@@ -181,6 +181,8 @@ async function startLocalStream() {
     streamReady = true;
     streamReadyResolve();
 
+    showLocalTile(localStream);
+
     // Inject track into any already-open connections
     for (const [, pc] of connections) {
       localStream.getTracks().forEach(t => {
@@ -216,6 +218,30 @@ function attachStream(peerId, stream) {
   tile.classList.remove('connecting');
 }
 
+function showLocalTile(stream) {
+  const swiper = document.getElementById('screens-swiper');
+  const wrap = document.getElementById('swiper-wrap');
+  const empty = document.getElementById('empty-state');
+
+  empty.style.display = 'none';
+  wrap.style.display = 'flex';
+
+  let tile = swiper.querySelector('[data-peer="__local__"]');
+  if (!tile) {
+    tile = buildTile('__local__', { name: `${window.electronAPI?.hostname || 'You'} (you)` });
+    swiper.insertBefore(tile, swiper.firstChild); // always first
+  }
+
+  const video = tile.querySelector('video');
+  video.srcObject = stream;
+  tile.classList.remove('connecting');
+
+  const nav = document.getElementById('swiper-nav');
+  const count = swiper.querySelectorAll('[data-peer]').length;
+  nav.style.display = count > 1 ? 'flex' : 'none';
+  updateArrows();
+}
+
 function renderScreens() {
   const swiper = document.getElementById('screens-swiper');
   const wrap = document.getElementById('swiper-wrap');
@@ -223,7 +249,7 @@ function renderScreens() {
   const empty = document.getElementById('empty-state');
   const peerIds = [...peers.keys()];
 
-  if (peerIds.length === 0) {
+  if (peerIds.length === 0 && !localStream) {
     wrap.style.display = 'none';
     nav.style.display = 'none';
     empty.style.display = 'flex';
@@ -233,9 +259,9 @@ function renderScreens() {
   empty.style.display = 'none';
   wrap.style.display = 'flex';
 
-  // Remove tiles for gone peers
+  // Remove tiles for gone peers (preserve local tile)
   swiper.querySelectorAll('[data-peer]').forEach(el => {
-    if (!peers.has(el.dataset.peer)) el.remove();
+    if (el.dataset.peer !== '__local__' && !peers.has(el.dataset.peer)) el.remove();
   });
 
   // Add tiles for new peers
