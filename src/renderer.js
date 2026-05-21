@@ -118,9 +118,8 @@ function getOrCreatePC(peerId) {
     }
   };
 
-  // Only lower UUID sends offers — avoids duplicate initial offers and m-line order races
+  // Either side may offer (perfect negotiation); collisions resolved in onOffer
   pc.onnegotiationneeded = async () => {
-    if (myId >= peerId) return;
     if (pc.signalingState !== 'stable') return;
     try {
       const offer = await pc.createOffer();
@@ -176,8 +175,17 @@ async function onOffer(from, sdp) {
   // Wait for local stream so our tracks are included in the answer
   if (!streamReady) await streamReadyPromise;
   const pc = getOrCreatePC(from);
-  // If we have a pending local offer (collision), the lower UUID wins and ignores this offer
-  if (pc.signalingState === 'have-local-offer' && myId < from) return;
+
+  const collision = pc.signalingState !== 'stable';
+  const impolite = myId < from; // lower UUID never yields
+
+  if (collision && impolite) return; // impolite peer ignores colliding remote offer
+
+  if (collision) {
+    // Polite peer (higher UUID) rolls back its pending offer and accepts the remote one
+    await pc.setLocalDescription({ type: 'rollback' });
+  }
+
   await pc.setRemoteDescription(new RTCSessionDescription(sdp));
   const answer = await pc.createAnswer();
   await pc.setLocalDescription(answer);
