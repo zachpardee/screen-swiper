@@ -95,7 +95,7 @@ function maybeOffer(peerId) {
   // Lower UUID is always the offerer to prevent both sides sending an offer
   if (!myId || myId >= peerId) return;
   if (streamReady) {
-    sendOffer(peerId);
+    getOrCreatePC(peerId); // adding tracks triggers onnegotiationneeded, which sends the offer
   } else {
     pendingOffers.push(peerId);
   }
@@ -118,15 +118,16 @@ function getOrCreatePC(peerId) {
     }
   };
 
-  // Renegotiate when new tracks are added (e.g. secondary monitor captured after connection)
+  // Only lower UUID sends offers — avoids duplicate initial offers and m-line order races
   pc.onnegotiationneeded = async () => {
+    if (myId >= peerId) return;
     if (pc.signalingState !== 'stable') return;
     try {
       const offer = await pc.createOffer();
       if (pc.signalingState !== 'stable') return;
       await pc.setLocalDescription(offer);
       ws.send(JSON.stringify({ type: 'offer', to: peerId, sdp: pc.localDescription }));
-    } catch {}
+    } catch (e) { console.error('onnegotiationneeded:', e); }
   };
 
   pc.ontrack = ({ streams }) => {
@@ -161,10 +162,14 @@ function getOrCreatePC(peerId) {
 }
 
 async function sendOffer(peerId) {
-  const pc = getOrCreatePC(peerId);
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
-  ws.send(JSON.stringify({ type: 'offer', to: peerId, sdp: pc.localDescription }));
+  const pc = connections.get(peerId);
+  if (!pc || pc.signalingState !== 'stable') return;
+  try {
+    const offer = await pc.createOffer();
+    if (pc.signalingState !== 'stable') return;
+    await pc.setLocalDescription(offer);
+    ws.send(JSON.stringify({ type: 'offer', to: peerId, sdp: pc.localDescription }));
+  } catch (e) { console.error('sendOffer:', e); }
 }
 
 async function onOffer(from, sdp) {
@@ -181,7 +186,12 @@ async function onOffer(from, sdp) {
 
 async function onAnswer(from, sdp) {
   const pc = connections.get(from);
-  if (pc) await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+  if (!pc) return;
+  await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+  // If tracks were added while negotiating (e.g. secondary monitor), renegotiate now
+  if (myId < from && pc.getTransceivers().some(t => t.sender.track && !t.mid)) {
+    await sendOffer(from);
+  }
 }
 
 async function onIce(from, candidate) {
@@ -241,7 +251,8 @@ async function startLocalStream() {
             else pc.addTrack(t, stream);
           });
         }
-        for (const peerId of pendingOffers.splice(0)) sendOffer(peerId);
+        // Create PCs for deferred peers — addTrack inside triggers onnegotiationneeded
+        for (const peerId of pendingOffers.splice(0)) getOrCreatePC(peerId);
       } else {
         // Inject secondary monitor tracks into existing connections (triggers renegotiation)
         for (const [, pc] of connections) {
