@@ -2,6 +2,10 @@ const { app, BrowserWindow, desktopCapturer } = require('electron');
 const path = require('path');
 const { createSignalingServer } = require('./server');
 
+// Expose real LAN IPs in WebRTC ICE candidates instead of mDNS .local hostnames.
+// Without this, two machines on the same Wi-Fi can't connect directly.
+app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
+
 let signalingServer;
 
 app.whenReady().then(async () => {

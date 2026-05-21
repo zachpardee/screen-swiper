@@ -1,4 +1,10 @@
-const ICE_CONFIG = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+const ICE_CONFIG = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' },
+  ],
+};
 
 let ws;
 let myId = null;
