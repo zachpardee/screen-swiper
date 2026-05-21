@@ -48,7 +48,7 @@ async function handle(msg) {
   switch (msg.type) {
     case 'init':
       myId = msg.id;
-      document.getElementById('device-name').textContent = msg.name;
+      renderUsersBar();
       break;
 
     case 'peer-list':
@@ -59,6 +59,7 @@ async function handle(msg) {
         }
       }
       renderScreens();
+      renderUsersBar();
       break;
 
     case 'peer-connected':
@@ -66,6 +67,7 @@ async function handle(msg) {
         peers.set(msg.id, { name: msg.name, ip: msg.ip });
         maybeOffer(msg.id);
         renderScreens();
+        renderUsersBar();
       }
       break;
 
@@ -73,6 +75,7 @@ async function handle(msg) {
       peers.delete(msg.id);
       dropConnection(msg.id);
       renderScreens();
+      renderUsersBar();
       break;
 
     case 'offer':
@@ -291,6 +294,23 @@ async function startLocalStream() {
 
 // ── UI ─────────────────────────────────────────────────────────────────────
 
+function renderUsersBar() {
+  const bar = document.getElementById('users-bar');
+  bar.innerHTML = '';
+
+  const selfChip = document.createElement('span');
+  selfChip.className = 'user-chip self';
+  selfChip.innerHTML = `<span class="user-chip-dot"></span>${MY_HOSTNAME} (you)`;
+  bar.appendChild(selfChip);
+
+  for (const [, peer] of peers) {
+    const chip = document.createElement('span');
+    chip.className = 'user-chip peer';
+    chip.innerHTML = `<span class="user-chip-dot"></span>${peer.name || 'Unknown'}`;
+    bar.appendChild(chip);
+  }
+}
+
 function setStatus(state, label) {
   document.getElementById('status-dot').className = `status-dot ${state}`;
   document.getElementById('status-label').textContent = label;
@@ -434,7 +454,7 @@ function toggleFullscreen(el) {
 // ── Init ───────────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('device-name').textContent = MY_HOSTNAME;
+  renderUsersBar();
 
   document.getElementById('modal-close').addEventListener('click', closeModal);
   document.getElementById('modal-fs-btn').addEventListener('click', () => {

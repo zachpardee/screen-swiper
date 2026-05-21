@@ -74,14 +74,45 @@ header * { -webkit-app-region: no-drag; }
 .status-dot.disconnected { background: #ff5f57; }
 .status-dot.error        { background: #ffbd2e; }
 
-.device-chip {
-  background: var(--accent-dim);
-  border: 1px solid rgba(90,111,255,0.3);
+.users-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  max-width: 480px;
+  overflow: hidden;
+}
+
+.user-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   border-radius: 999px;
   padding: 4px 10px;
   font-size: 12px;
-  color: var(--accent);
   font-weight: 500;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.user-chip.self {
+  background: var(--accent-dim);
+  border: 1px solid rgba(90,111,255,0.3);
+  color: var(--accent);
+}
+
+.user-chip.peer {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+.user-chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #3ddc84;
+  flex-shrink: 0;
 }
 
 /* ── Main ─────────────────────────────────────────────── */
