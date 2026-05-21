@@ -145,9 +145,8 @@ function getOrCreatePC(peerId) {
 
     if (idx > 0) {
       const tile = buildTile(tileId, { name: peer.name || peerId.slice(0, 8) });
-      document.getElementById('screens-swiper').appendChild(tile);
-      renderNavDots();
-      updateArrows();
+      document.getElementById('screens-grid').appendChild(tile);
+      updateGridColumns();
     }
 
     attachStream(tileId, stream);
@@ -218,8 +217,7 @@ function dropConnection(peerId) {
     const id = el.dataset.peer;
     if (id === peerId || id.startsWith(peerId + '_')) el.remove();
   });
-  renderNavDots();
-  updateArrows();
+  updateGridColumns();
 }
 
 // ── Screen capture ─────────────────────────────────────────────────────────
@@ -230,6 +228,8 @@ async function startLocalStream() {
       ? await window.electronAPI.getScreenSources()
       : [{ id: null, name: null }];
 
+    // Capture ALL monitors first so localStreamsList is complete before any PC is created
+    const captured = [];
     for (let i = 0; i < sources.length; i++) {
       const source = sources[i];
       const tileId = i === 0 ? '__local__' : `__local_${i}`;
@@ -245,37 +245,37 @@ async function startLocalStream() {
       });
 
       localStreamsList.push(stream);
+      captured.push({ stream, tileId, label, index: i });
+    }
 
-      if (i === 0) {
-        localStream = stream;
-        streamReady = true;
-        streamReadyResolve();
+    // Signal ready now — all streams are in localStreamsList
+    localStream = captured[0].stream;
+    streamReady = true;
+    streamReadyResolve();
 
-        // Inject primary track into any already-open connections
-        for (const [, pc] of connections) {
-          stream.getTracks().forEach(t => {
-            const sender = pc.getSenders().find(s => s.track?.kind === t.kind);
-            if (sender) sender.replaceTrack(t);
-            else pc.addTrack(t, stream);
-          });
-        }
-        // Create PCs for deferred peers — addTrack inside triggers onnegotiationneeded
-        for (const peerId of pendingOffers.splice(0)) getOrCreatePC(peerId);
-      } else {
-        // Inject secondary monitor tracks into existing connections (triggers renegotiation)
-        for (const [, pc] of connections) {
-          stream.getTracks().forEach(t => pc.addTrack(t, stream));
-        }
+    // Inject into any already-open connections (reconnect case)
+    for (const [, pc] of connections) {
+      for (const { stream } of captured) {
+        stream.getTracks().forEach(t => {
+          const sender = pc.getSenders().find(s => s.track?.kind === t.kind && !s.track);
+          if (sender) sender.replaceTrack(t);
+          else pc.addTrack(t, stream);
+        });
       }
+    }
 
+    // Create PCs for deferred peers — getOrCreatePC adds all localStreamsList tracks at once
+    for (const peerId of pendingOffers.splice(0)) getOrCreatePC(peerId);
+
+    // Show tiles and attach ended handlers
+    for (const { stream, tileId, label, index: i } of captured) {
       showLocalTile(tileId, stream, label);
 
       stream.getVideoTracks()[0].onended = () => {
         localStreamsList.splice(localStreamsList.indexOf(stream), 1);
         const tile = document.querySelector(`[data-peer="${tileId}"]`);
         if (tile) tile.remove();
-        renderNavDots();
-        updateArrows();
+        updateGridColumns();
         if (i === 0) {
           streamReady = false;
           localStream = null;
