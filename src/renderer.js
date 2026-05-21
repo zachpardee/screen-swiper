@@ -20,6 +20,7 @@ const pendingOffers = [];      // peerIds waiting for localStream
 // ── WebSocket ──────────────────────────────────────────────────────────────
 
 const wsPort = new URLSearchParams(location.search).get('wsPort') || '3456';
+const MY_HOSTNAME = new URLSearchParams(location.search).get('hostname') || 'You';
 
 function connect() {
   ws = new WebSocket(`ws://localhost:${wsPort}`);
@@ -167,34 +168,54 @@ function dropConnection(peerId) {
 
 async function startLocalStream() {
   try {
-    localStream = await navigator.mediaDevices.getDisplayMedia({
-      video: { frameRate: { ideal: 30 } },
-      audio: false,
-    });
+    const sources = window.electronAPI?.getScreenSources
+      ? await window.electronAPI.getScreenSources()
+      : [{ id: null, name: null }];
 
-    localStream.getVideoTracks()[0].onended = () => {
-      streamReady = false;
-      localStream = null;
-      setTimeout(startLocalStream, 800);
-    };
+    for (let i = 0; i < sources.length; i++) {
+      const source = sources[i];
+      const tileId = i === 0 ? '__local__' : `__local_${i}`;
+      const label = i === 0
+        ? `${MY_HOSTNAME} (you)`
+        : `${source.name || `Screen ${i + 1}`} (you)`;
 
-    streamReady = true;
-    streamReadyResolve();
+      if (source.id) await window.electronAPI.setNextSource(source.id);
 
-    showLocalTile(localStream);
-
-    // Inject track into any already-open connections
-    for (const [, pc] of connections) {
-      localStream.getTracks().forEach(t => {
-        const sender = pc.getSenders().find(s => s.track?.kind === t.kind);
-        if (sender) sender.replaceTrack(t);
-        else pc.addTrack(t, localStream);
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { frameRate: { ideal: 30 } },
+        audio: false,
       });
+
+      if (i === 0) {
+        localStream = stream;
+        streamReady = true;
+        streamReadyResolve();
+
+        // Inject primary track into any already-open connections
+        for (const [, pc] of connections) {
+          stream.getTracks().forEach(t => {
+            const sender = pc.getSenders().find(s => s.track?.kind === t.kind);
+            if (sender) sender.replaceTrack(t);
+            else pc.addTrack(t, stream);
+          });
+        }
+        for (const peerId of pendingOffers.splice(0)) sendOffer(peerId);
+      }
+
+      showLocalTile(tileId, stream, label);
+
+      stream.getVideoTracks()[0].onended = () => {
+        const tile = document.querySelector(`[data-peer="${tileId}"]`);
+        if (tile) tile.remove();
+        renderNavDots();
+        updateArrows();
+        if (i === 0) {
+          streamReady = false;
+          localStream = null;
+          setTimeout(startLocalStream, 800);
+        }
+      };
     }
-
-    // Flush deferred offers
-    for (const peerId of pendingOffers.splice(0)) sendOffer(peerId);
-
   } catch (err) {
     console.error('getDisplayMedia failed:', err);
     setStatus('error', 'Capture failed');
@@ -218,28 +239,39 @@ function attachStream(peerId, stream) {
   tile.classList.remove('connecting');
 }
 
-function showLocalTile(stream) {
+function showLocalTile(tileId, stream, label) {
   const swiper = document.getElementById('screens-swiper');
-  const wrap = document.getElementById('swiper-wrap');
-  const empty = document.getElementById('empty-state');
+  document.getElementById('swiper-wrap').style.display = 'flex';
+  document.getElementById('empty-state').style.display = 'none';
 
-  empty.style.display = 'none';
-  wrap.style.display = 'flex';
-
-  let tile = swiper.querySelector('[data-peer="__local__"]');
+  let tile = swiper.querySelector(`[data-peer="${tileId}"]`);
   if (!tile) {
-    tile = buildTile('__local__', { name: `${window.electronAPI?.hostname || 'You'} (you)` });
-    swiper.insertBefore(tile, swiper.firstChild); // always first
+    tile = buildTile(tileId, { name: label });
+    // Insert after last local tile so local screens always stay at front
+    const locals = [...swiper.querySelectorAll('[data-peer^="__local"]')];
+    const last = locals[locals.length - 1];
+    last ? last.insertAdjacentElement('afterend', tile) : swiper.insertBefore(tile, swiper.firstChild);
   }
 
-  const video = tile.querySelector('video');
-  video.srcObject = stream;
+  tile.querySelector('video').srcObject = stream;
   tile.classList.remove('connecting');
+  renderNavDots();
+  updateArrows();
+}
 
+function renderNavDots() {
+  const swiper = document.getElementById('screens-swiper');
   const nav = document.getElementById('swiper-nav');
   const count = swiper.querySelectorAll('[data-peer]').length;
   nav.style.display = count > 1 ? 'flex' : 'none';
-  updateArrows();
+  nav.innerHTML = '';
+  for (let i = 0; i < count; i++) {
+    const dot = document.createElement('button');
+    dot.className = `nav-dot${i === currentSlide ? ' active' : ''}`;
+    dot.setAttribute('aria-label', `Screen ${i + 1}`);
+    dot.addEventListener('click', () => goTo(i));
+    nav.appendChild(dot);
+  }
 }
 
 function renderScreens() {
@@ -259,9 +291,9 @@ function renderScreens() {
   empty.style.display = 'none';
   wrap.style.display = 'flex';
 
-  // Remove tiles for gone peers (preserve local tile)
+  // Remove tiles for gone peers (preserve all local tiles)
   swiper.querySelectorAll('[data-peer]').forEach(el => {
-    if (el.dataset.peer !== '__local__' && !peers.has(el.dataset.peer)) el.remove();
+    if (!el.dataset.peer.startsWith('__local') && !peers.has(el.dataset.peer)) el.remove();
   });
 
   // Add tiles for new peers
@@ -275,18 +307,7 @@ function renderScreens() {
     }
   }
 
-  // Nav dots
-  const count = swiper.querySelectorAll('[data-peer]').length;
-  nav.style.display = count > 1 ? 'flex' : 'none';
-  nav.innerHTML = '';
-  for (let i = 0; i < count; i++) {
-    const dot = document.createElement('button');
-    dot.className = `nav-dot${i === currentSlide ? ' active' : ''}`;
-    dot.setAttribute('aria-label', `Screen ${i + 1}`);
-    dot.addEventListener('click', () => goTo(i));
-    nav.appendChild(dot);
-  }
-
+  renderNavDots();
   updateArrows();
 }
 
@@ -353,7 +374,7 @@ function updateArrows() {
 // ── Init ───────────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('device-name').textContent = window.electronAPI?.hostname || '';
+  document.getElementById('device-name').textContent = MY_HOSTNAME;
 
   document.getElementById('arrow-left').addEventListener('click', () => goTo(currentSlide - 1));
   document.getElementById('arrow-right').addEventListener('click', () => goTo(currentSlide + 1));

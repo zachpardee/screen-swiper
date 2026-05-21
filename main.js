@@ -1,5 +1,6 @@
-const { app, BrowserWindow, desktopCapturer } = require('electron');
+const { app, BrowserWindow, desktopCapturer, ipcMain } = require('electron');
 const path = require('path');
+const os = require('os');
 const { createSignalingServer } = require('./server');
 
 // Expose real LAN IPs in WebRTC ICE candidates instead of mDNS .local hostnames.
@@ -7,6 +8,14 @@ const { createSignalingServer } = require('./server');
 app.commandLine.appendSwitch('disable-features', 'WebRtcHideLocalIpsWithMdns');
 
 let signalingServer;
+let pendingSourceId = null;
+
+ipcMain.handle('get-screen-sources', async () => {
+  const sources = await desktopCapturer.getSources({ types: ['screen'] });
+  return sources.map(s => ({ id: s.id, name: s.name }));
+});
+
+ipcMain.handle('set-next-source', (_, id) => { pendingSourceId = id; });
 
 app.whenReady().then(async () => {
   const win = new BrowserWindow({
@@ -23,10 +32,14 @@ app.whenReady().then(async () => {
     },
   });
 
-  // Intercept getDisplayMedia and auto-select the primary screen
+  // Intercept getDisplayMedia — use pendingSourceId to select a specific monitor
   win.webContents.session.setDisplayMediaRequestHandler((_req, callback) => {
     desktopCapturer.getSources({ types: ['screen'] }).then(sources => {
-      callback({ video: sources[0] });
+      const source = pendingSourceId
+        ? (sources.find(s => s.id === pendingSourceId) || sources[0])
+        : sources[0];
+      pendingSourceId = null;
+      callback({ video: source });
     });
   });
 
@@ -34,7 +47,7 @@ app.whenReady().then(async () => {
   signalingServer = await createSignalingServer(win);
 
   win.loadFile(path.join(__dirname, 'src', 'index.html'), {
-    query: { wsPort: String(signalingServer.port) },
+    query: { wsPort: String(signalingServer.port), hostname: os.hostname() },
   });
 });
 
